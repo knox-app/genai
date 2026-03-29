@@ -1,0 +1,5 @@
+{
+  "name": "Deep Researcher AI",
+  "description": "A powerful AI-driven research assistant that performs deep web searches, synthesizes information into comprehensive reports, and exports them to PDF.",
+  "requestFramePermissions": []
+}
