@@ -1,13 +1,187 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sonar DeepResearch</title>
 
+<style>
+body { background:#05070a; color:white; font-family:Arial; }
+.app { max-width:900px; margin:auto; padding:20px; }
+input { width:70%; padding:10px; border-radius:8px; border:none; }
+button { padding:10px; background:#00f2ff; border:none; border-radius:8px; cursor:pointer; }
+.layer { opacity:0.5; margin-top:10px; padding:8px; }
+.active { opacity:1; border-left:4px solid cyan; }
+#report { display:none; background:white; color:black; padding:20px; margin-top:20px; border-radius:10px; }
+.tag { background:#eee; padding:3px 6px; margin-right:5px; border-radius:5px; }
+</style>
+</head>
+
+<body>
+<div class="app">
+<h1>SONAR DEEPRESEARCH</h1>
+
+<input id="topic" placeholder="Enter topic...">
+<button onclick="startResearch()">Search</button>
+
+<div id="layers">
+<div class="layer" id="l1">Layer 1: Understanding...</div>
+<div class="layer" id="l2">Layer 2: Analysis...</div>
+<div class="layer" id="l3">Layer 3: Future insights...</div>
+</div>
+
+<div id="report">
+<h2 id="title"></h2>
+<p id="body"></p>
+<h4>Sources:</h4>
+<div id="sources"></div>
+</div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+
+// 🔑 ADD YOUR GROQ KEY
+const GROQ_KEY = "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";
+
+// 🔥 YOUR FIREBASE CONFIG
+const firebaseConfig = {
+  apiKey: "AIzaSyDPm2za3Ho0Hd8Henuhq0KxAHyUQh-Hi-U",
+  authDomain: "question-metabase.firebaseapp.com",
+  projectId: "question-metabase",
+  storageBucket: "question-metabase.firebasestorage.app",
+  messagingSenderId: "770698198753",
+  appId: "1:770698198753:web:59ae49d78b6013bab5c1a0"
+};
+
+// 🚀 INIT FIREBASE
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// 🔍 MAIN FUNCTION
+window.startResearch = async function(threadId=null) {
+    const topic = document.getElementById("topic").value;
+    if (!topic) return;
+
+    const thread = threadId || "th_" + Math.random().toString(36).slice(2);
+
+    try {
+        await runLayers();
+
+        const data = await callGroq(topic);
+
+        showReport(topic, data);
+
+        // 💾 SAVE TO FIRESTORE
+        await setDoc(doc(db, "research", thread), {
+            topic,
+            data,
+            created: Date.now()
+        });
+
+        // 🔗 UPDATE URL
+        const url = `?sub=${encodeURIComponent(topic)}&thread=${thread}`;
+        window.history.pushState({}, "", url);
+
+    } catch(e) {
+        alert("Error: " + e.message);
+    }
+};
+
+// 🎭 FAKE LAYERS
+async function runLayers() {
+    setLayer(1); await sleep(800 + Math.random()*400);
+    setLayer(2); await sleep(1000 + Math.random()*400);
+    setLayer(3); await sleep(800 + Math.random()*400);
+}
+
+// 🤖 GROQ API
+async function callGroq(topic) {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method:"POST",
+        headers:{
+            "Authorization": `Bearer ${GROQ_KEY}`,
+            "Content-Type":"application/json"
+        },
+        body: JSON.stringify({
+            model:"llama-3.3-70b-versatile",
+            messages:[{
+                role:"user",
+                content:`Deep research on: ${topic}
+
+Sections:
+- Summary
+- Technical Analysis
+- Trends
+- Future Predictions
+- Conclusion
+
+Add:
+SOURCES: [Source Name]`
+            }]
+        })
+    });
+
+    const j = await res.json();
+    return j.choices[0].message.content;
+}
+
+// 📄 SHOW RESULT
+function showReport(topic, text) {
+    document.getElementById("title").innerText = topic;
+
+    const clean = text.split("SOURCES:")[0];
+    const src = text.match(/SOURCES: \[(.*?)\]/g);
+
+    document.getElementById("body").innerText = clean;
+
+    const box = document.getElementById("sources");
+    box.innerHTML = "";
+
+    if (src) {
+        src.forEach(s => {
+            let el = document.createElement("span");
+            el.className = "tag";
+            el.innerText = s.replace("SOURCES: ", "");
+            box.appendChild(el);
+        });
+    }
+
+    document.getElementById("report").style.display = "block";
+}
+
+// 📥 LOAD FROM URL
+window.onload = async () => {
+    const params = new URLSearchParams(window.location.search);
+    const topic = params.get("sub");
+    const thread = params.get("thread");
+
+    if (topic && thread) {
+        document.getElementById("topic").value = topic;
+
+        const ref = doc(db, "research", thread);
+        const snap = await getDoc(ref);
+
+        if (snap.exists()) {
+            const d = snap.data();
+            showReport(d.topic, d.data);
+        } else {
+            startResearch(thread);
+        }
+    }
+};
+
+// 🧩 HELPERS
+function setLayer(n){
+    document.querySelectorAll(".layer").forEach(el => el.classList.remove("active"));
+    document.getElementById("l"+n).classList.add("active");
+}
+
+function sleep(ms){
+    return new Promise(r => setTimeout(r, ms));
+}
+</script>
+
+</body>
+</html>
