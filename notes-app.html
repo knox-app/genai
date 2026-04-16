@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Collaborative Notes (Firestore + Custom Login)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --muted: #94a3b8;
+      --text: #e2e8f0;
+      --accent: #22d3ee;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --border: #1f2937;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #020617 0%, #0b1224 50%, #111827 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .app {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 20px;
+    }
+
+    .card {
+      background: rgba(17, 24, 39, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      backdrop-filter: blur(6px);
+    }
+
+    h1, h2, h3 { margin: 0 0 10px; }
+    h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; color: #cbd5e1; }
+    h3 { font-size: .92rem; color: #cbd5e1; }
+
+    .muted { color: var(--muted); font-size: .9rem; }
+    .small { font-size: .82rem; }
+
+    .stack { display: grid; gap: 10px; }
+    .row { display: flex; gap: 10px; align-items: center; }
+
+    input, textarea, button {
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+    }
+
+    input, textarea {
+      width: 100%;
+      color: var(--text);
+      background: #0b1220;
+    }
+
+    textarea {
+      min-height: 330px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    button {
+      cursor: pointer;
+      color: #001018;
+      background: var(--accent);
+      border: none;
+      font-weight: 600;
+      transition: transform .05s ease, filter .2s ease;
+    }
+
+    button:hover { filter: brightness(1.05); }
+    button:active { transform: translateY(1px); }
+    button.secondary { background: #334155; color: #f8fafc; }
+    button.danger { background: var(--danger); color: #fff; }
+
+    #noteList {
+      max-height: 380px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .note-item {
+      background: #0b1220;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 10px;
+      cursor: pointer;
+      display: grid;
+      gap: 5px;
+    }
+
+    .note-item.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+    }
+
+    .status {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid #1e293b;
+      background: #0b1220;
+      min-height: 40px;
+    }
+
+    .ok { color: var(--ok); }
+    .err { color: #fca5a5; }
+
+    .hidden { display: none !important; }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="card stack">
+      <h1>📝 Team Notes</h1>
+      <p class="muted">Custom login in Firestore (no Firebase Auth API). Real-time collaborative notes via Firestore snapshots.</p>
+
+      <section id="authBox" class="stack">
+        <h2>Login / Register</h2>
+        <input id="username" placeholder="Username (min 3 chars)" autocomplete="username" />
+        <input id="password" type="password" placeholder="Password (min 6 chars)" autocomplete="current-password" />
+        <div class="row">
+          <button id="registerBtn">Register</button>
+          <button id="loginBtn" class="secondary">Login</button>
+        </div>
+      </section>
+
+      <section id="userBox" class="stack hidden">
+        <div class="meta">
+          <h2>Welcome, <span id="who"></span></h2>
+          <button id="logoutBtn" class="danger">Logout</button>
+        </div>
+
+        <div class="row">
+          <button id="newNoteBtn">+ New Note</button>
+          <button id="deleteNoteBtn" class="danger">Delete</button>
+        </div>
+
+        <h3>Your Accessible Notes</h3>
+        <div id="noteList"></div>
+      </section>
+
+      <div id="status" class="status muted">Ready.</div>
+    </aside>
+
+    <main class="card stack hidden" id="editorBox">
+      <div class="meta">
+        <h2>Editor</h2>
+        <span class="small muted" id="liveInfo">No note selected.</span>
+      </div>
+
+      <input id="noteTitle" placeholder="Note title" />
+      <textarea id="noteBody" placeholder="Write your shared note here..."></textarea>
+
+      <div class="row">
+        <button id="saveBtn">Save</button>
+        <input id="shareUser" placeholder="Share with username" />
+        <button id="shareBtn" class="secondary">Share Access</button>
+      </div>
+      <p class="small muted">Every shared user listed in <code>editors</code> can open and edit this note in real time.</p>
+    </main>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      setDoc,
+      getDoc,
+      addDoc,
+      updateDoc,
+      deleteDoc,
+      onSnapshot,
+      collection,
+      query,
+      where,
+      serverTimestamp,
+      orderBy,
+      arrayUnion
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDPm2za3Ho0Hd8Henuhq0KxAHyUQh-Hi-U",
+      authDomain: "question-metabase.firebaseapp.com",
+      databaseURL: "https://question-metabase-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "question-metabase",
+      storageBucket: "question-metabase.firebasestorage.app",
+      messagingSenderId: "770698198753",
+      appId: "1:770698198753:web:59ae49d78b6013bab5c1a0",
+      measurementId: "G-6ZP1FPMKSJ"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const ui = {
+      status: document.getElementById('status'),
+      authBox: document.getElementById('authBox'),
+      userBox: document.getElementById('userBox'),
+      editorBox: document.getElementById('editorBox'),
+      username: document.getElementById('username'),
+      password: document.getElementById('password'),
+      who: document.getElementById('who'),
+      noteList: document.getElementById('noteList'),
+      noteTitle: document.getElementById('noteTitle'),
+      noteBody: document.getElementById('noteBody'),
+      shareUser: document.getElementById('shareUser'),
+      liveInfo: document.getElementById('liveInfo')
+    };
+
+    const state = {
+      user: null,
+      selectedNoteId: null,
+      selectedNote: null,
+      unsubNotes: null,
+      unsubSelected: null
+    };
+
+    const setStatus = (msg, type = 'muted') => {
+      ui.status.className = `status ${type}`;
+      ui.status.textContent = msg;
+    };
+
+    const toUsername = (v) => (v || '').trim().toLowerCase();
+
+    async function sha256Hex(text) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function randomSalt() {
+      return crypto.getRandomValues(new Uint32Array(4)).join('-');
+    }
+
+    async function register() {
+      const username = toUsername(ui.username.value);
+      const password = ui.password.value;
+      if (username.length < 3 || password.length < 6) {
+        return setStatus('Username must be >=3 and password >=6.', 'err');
+      }
+
+      const userRef = doc(db, 'users', username);
+      const existing = await getDoc(userRef);
+      if (existing.exists()) {
+        return setStatus('Username already exists.', 'err');
+      }
+
+      const salt = randomSalt();
+      const passHash = await sha256Hex(`${password}::${salt}`);
+
+      await setDoc(userRef, {
+        username,
+        salt,
+        passHash,
+        createdAt: serverTimestamp(),
+        lastLoginAt: null
+      });
+
+      setStatus('Registration successful. Please login.', 'ok');
+    }
+
+    async function login() {
+      const username = toUsername(ui.username.value);
+      const password = ui.password.value;
+      if (!username || !password) return setStatus('Enter username and password.', 'err');
+
+      const userRef = doc(db, 'users', username);
+      const snap = await getDoc(userRef);
+      if (!snap.exists()) return setStatus('User not found.', 'err');
+
+      const u = snap.data();
+      const incoming = await sha256Hex(`${password}::${u.salt}`);
+      if (incoming !== u.passHash) return setStatus('Wrong password.', 'err');
+
+      await updateDoc(userRef, { lastLoginAt: serverTimestamp() });
+      state.user = { username };
+      localStorage.setItem('notes_demo_user', username);
+      afterLogin();
+      setStatus(`Logged in as ${username}.`, 'ok');
+    }
+
+    function logout() {
+      if (state.unsubNotes) state.unsubNotes();
+      if (state.unsubSelected) state.unsubSelected();
+      state.user = null;
+      state.selectedNoteId = null;
+      state.selectedNote = null;
+      localStorage.removeItem('notes_demo_user');
+      ui.noteList.innerHTML = '';
+      ui.authBox.classList.remove('hidden');
+      ui.userBox.classList.add('hidden');
+      ui.editorBox.classList.add('hidden');
+      setStatus('Logged out.', 'muted');
+    }
+
+    function afterLogin() {
+      ui.authBox.classList.add('hidden');
+      ui.userBox.classList.remove('hidden');
+      ui.editorBox.classList.remove('hidden');
+      ui.who.textContent = state.user.username;
+      startNoteListWatcher();
+    }
+
+    function renderNoteList(notes) {
+      ui.noteList.innerHTML = '';
+      if (!notes.length) {
+        ui.noteList.innerHTML = '<div class="muted small">No notes yet. Create one.</div>';
+        return;
+      }
+
+      notes.forEach(n => {
+        const div = document.createElement('div');
+        div.className = `note-item ${n.id === state.selectedNoteId ? 'active' : ''}`;
+        div.innerHTML = `
+          <strong>${escapeHtml(n.title || '(untitled)')}</strong>
+          <span class="small muted">Owner: ${escapeHtml(n.owner)}</span>
+          <span class="small muted">Editors: ${(n.editors || []).map(escapeHtml).join(', ')}</span>
+        `;
+        div.onclick = () => selectNote(n.id);
+        ui.noteList.appendChild(div);
+      });
+    }
+
+    function escapeHtml(s = '') {
+      return s.replace(/[&<>'"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
+    }
+
+    function startNoteListWatcher() {
+      if (state.unsubNotes) state.unsubNotes();
+
+      const q = query(
+        collection(db, 'notes'),
+        where('editors', 'array-contains', state.user.username),
+        orderBy('updatedAt', 'desc')
+      );
+
+      state.unsubNotes = onSnapshot(q, (snap) => {
+        const notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderNoteList(notes);
+
+        if (state.selectedNoteId && !notes.some(n => n.id === state.selectedNoteId)) {
+          state.selectedNoteId = null;
+          state.selectedNote = null;
+          ui.noteTitle.value = '';
+          ui.noteBody.value = '';
+          ui.liveInfo.textContent = 'Selected note was removed or no longer shared with you.';
+        }
+      }, err => {
+        console.error(err);
+        setStatus('Cannot watch notes. Check Firestore indexes/rules.', 'err');
+      });
+    }
+
+    function selectNote(noteId) {
+      state.selectedNoteId = noteId;
+      if (state.unsubSelected) state.unsubSelected();
+
+      const ref = doc(db, 'notes', noteId);
+      state.unsubSelected = onSnapshot(ref, (snap) => {
+        if (!snap.exists()) {
+          setStatus('Note not found (deleted).', 'err');
+          return;
+        }
+        const data = snap.data();
+        if (!(data.editors || []).includes(state.user.username)) {
+          setStatus('Access revoked for this note.', 'err');
+          return;
+        }
+
+        state.selectedNote = { id: snap.id, ...data };
+        ui.noteTitle.value = data.title || '';
+        ui.noteBody.value = data.body || '';
+        ui.liveInfo.textContent = `Live sync active • Last update: ${data.updatedBy || 'unknown'}`;
+        startNoteListWatcher();
+      });
+    }
+
+    async function createNote() {
+      if (!state.user) return;
+      const docRef = await addDoc(collection(db, 'notes'), {
+        title: 'New Note',
+        body: '',
+        owner: state.user.username,
+        editors: [state.user.username],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        updatedBy: state.user.username
+      });
+      setStatus('New note created.', 'ok');
+      selectNote(docRef.id);
+    }
+
+    async function saveNote() {
+      if (!state.selectedNoteId) return setStatus('Select a note first.', 'err');
+      await updateDoc(doc(db, 'notes', state.selectedNoteId), {
+        title: ui.noteTitle.value.trim() || 'Untitled',
+        body: ui.noteBody.value,
+        updatedAt: serverTimestamp(),
+        updatedBy: state.user.username
+      });
+      setStatus('Saved.', 'ok');
+    }
+
+    async function shareNote() {
+      const target = toUsername(ui.shareUser.value);
+      if (!state.selectedNoteId) return setStatus('Select a note first.', 'err');
+      if (!target) return setStatus('Enter username to share with.', 'err');
+
+      const targetUser = await getDoc(doc(db, 'users', target));
+      if (!targetUser.exists()) return setStatus('Target user does not exist.', 'err');
+
+      await updateDoc(doc(db, 'notes', state.selectedNoteId), {
+        editors: arrayUnion(target),
+        updatedAt: serverTimestamp(),
+        updatedBy: state.user.username
+      });
+
+      ui.shareUser.value = '';
+      setStatus(`Shared with ${target}.`, 'ok');
+    }
+
+    async function deleteSelectedNote() {
+      if (!state.selectedNoteId) return setStatus('No selected note.', 'err');
+      if (!confirm('Delete this note permanently?')) return;
+
+      await deleteDoc(doc(db, 'notes', state.selectedNoteId));
+      state.selectedNoteId = null;
+      state.selectedNote = null;
+      ui.noteTitle.value = '';
+      ui.noteBody.value = '';
+      ui.liveInfo.textContent = 'No note selected.';
+      setStatus('Note deleted.', 'ok');
+    }
+
+    async function tryRestoreSession() {
+      const u = toUsername(localStorage.getItem('notes_demo_user'));
+      if (!u) return;
+      const exists = await getDoc(doc(db, 'users', u));
+      if (!exists.exists()) return;
+      state.user = { username: u };
+      afterLogin();
+      setStatus(`Session restored for ${u}.`, 'ok');
+    }
+
+    document.getElementById('registerBtn').onclick = () => register().catch(e => setStatus(e.message, 'err'));
+    document.getElementById('loginBtn').onclick = () => login().catch(e => setStatus(e.message, 'err'));
+    document.getElementById('logoutBtn').onclick = logout;
+    document.getElementById('newNoteBtn').onclick = () => createNote().catch(e => setStatus(e.message, 'err'));
+    document.getElementById('deleteNoteBtn').onclick = () => deleteSelectedNote().catch(e => setStatus(e.message, 'err'));
+    document.getElementById('saveBtn').onclick = () => saveNote().catch(e => setStatus(e.message, 'err'));
+    document.getElementById('shareBtn').onclick = () => shareNote().catch(e => setStatus(e.message, 'err'));
+
+    tryRestoreSession().catch(() => {});
+
+    setStatus('Tip: set Firestore rules carefully; custom auth in client-side JS is insecure for production.', 'muted');
+  </script>
+</body>
+</html>
